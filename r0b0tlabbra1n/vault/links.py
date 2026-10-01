@@ -63,10 +63,15 @@ def find_orphans(vault_path: Path) -> list[Path]:
     """Find .md files in vault that have no incoming wikilinks."""
     md_files: set[Path] = set()
     linked: set[Path] = set()
+    # Resolve the vault path once so relative_to() comparisons work even when
+    # the vault lives on a mapped network drive (Z:) whose resolved form is a
+    # UNC path (\\server\share\...) — mixing the two flavors raises ValueError.
+    vault_resolved = Path(vault_path).resolve()
     for md_file in Path(vault_path).rglob("*.md"):
         rel = md_file.relative_to(vault_path)
-        rel_s = str(rel)
-        if rel_s.startswith("_meta/") or rel_s.startswith("raw/"):
+        # parts[0] is separator-agnostic (startswith("_meta/") fails on Windows
+        # where rel_s uses backslashes, leaking _meta/ and raw/ into results)
+        if rel.parts[0] in ("_meta", "raw"):
             continue
         md_files.add(rel)
         try:
@@ -76,7 +81,7 @@ def find_orphans(vault_path: Path) -> list[Path]:
         for link in extract_wikilinks(content):
             resolved = resolve_wikilink(vault_path, link, md_file)
             if resolved:
-                linked.add(resolved.relative_to(vault_path))
+                linked.add(resolved.relative_to(vault_resolved))
     root_names = {"START_HERE.md", "index.md", "SCHEMA.md", "log.md"}
     return [vault_path / f for f in sorted(md_files - linked) if f.name not in root_names]
 
@@ -86,14 +91,14 @@ def build_link_graph(vault_path: Path) -> dict[str, list[str]]:
     graph: dict[str, list[str]] = {}
     for md_file in Path(vault_path).rglob("*.md"):
         rel = md_file.relative_to(vault_path)
-        rel_s = str(rel)
-        if rel_s.startswith("_meta/") or rel_s.startswith("raw/"):
+        # parts[0] is separator-agnostic (see find_orphans)
+        if rel.parts[0] in ("_meta", "raw"):
             continue
         try:
             links = extract_wikilinks(md_file.read_text(encoding="utf-8"))
         except UnicodeDecodeError:
             continue
-        graph[rel_s.removesuffix(".md")] = links
+        graph[str(rel).removesuffix(".md")] = links
     return graph
 
 
